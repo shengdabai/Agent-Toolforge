@@ -71,6 +71,8 @@ diff) is closed at the next non-content line such as `diff --git`.
 File paths may contain spaces or Git C-style escapes (including UTF-8 octal
 escapes). Plain unified diffs use the `+++` path, or the `---` path for a
 deletion to `/dev/null`; rename-only diffs use the destination path.
+Records are separated by LF (CRLF is also accepted). Unicode line separators
+and other control characters inside source content do not create diff headers.
 
 Known limitations: in a truncated diff whose next file starts with a plain
 `--- a/x` header (no `diff --git` line) that line may still be counted as one

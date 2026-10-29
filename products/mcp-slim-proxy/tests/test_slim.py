@@ -20,6 +20,29 @@ class TestTokenEst(unittest.TestCase):
 
 
 class TestWhitelist(unittest.TestCase):
+    def test_malformed_field_entries_raise_instead_of_dropping_data(self):
+        payload = {"name": "visible", "extra": 1}
+        for fields in ([None], [1], [False], [""], ["name", None], ("name", "")):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                slim(payload, {"fields": fields})
+        self.assertEqual(payload, {"name": "visible", "extra": 1})
+
+    def test_drop_nulls_requires_a_boolean(self):
+        for value in ("false", "true", 0, 1, [], {}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                slim({"keep": None}, {"drop_nulls": value})
+
+    def test_drop_nulls_null_means_unset(self):
+        self.assertEqual(slim({"keep": None}, {"drop_nulls": None})[0], {"keep": None})
+
+    def test_valid_boolean_and_empty_field_rules_are_preserved(self):
+        payload = {"keep": None, "other": 1}
+        for fields in (None, [], (), ["keep"], ("keep",)):
+            with self.subTest(fields=fields):
+                expected = {"keep": None} if fields else payload
+                self.assertEqual(slim(payload, {"fields": fields, "drop_nulls": False})[0], expected)
+        self.assertEqual(slim(payload, {"drop_nulls": True})[0], {"other": 1})
+
     def test_keeps_only_whitelisted_fields(self):
         payload = {"a": 1, "b": 2, "c": 3}
         out, _ = slim(payload, {"fields": ["a", "c"]})

@@ -219,8 +219,11 @@ def parse_diff(diff_text: Optional[str]) -> List[Dict[str, object]]:
     old_left = 0
     new_left = 0
 
-    lines = diff_text.splitlines()
+    # A diff record ends at LF. Unicode separators and control characters can
+    # occur inside source lines; splitlines() would turn them into headers.
+    lines = diff_text.split("\n")
     for line in lines:
+        line = line.removesuffix("\r")  # Accept pasted CRLF diffs as well.
         if current is not None and (old_left > 0 or new_left > 0):
             if line.startswith("\\"):
                 continue  # "\ No newline at end of file"

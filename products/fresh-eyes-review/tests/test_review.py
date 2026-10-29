@@ -260,6 +260,29 @@ class TestEndToEnd(unittest.TestCase):
 
 
 class TestB11HunkAwareParsing(unittest.TestCase):
+    def test_unicode_separators_are_content_not_diff_line_breaks(self):
+        for separator in ("\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                diff = ("--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n"
+                        "-before" + separator + "continued\n-old\n"
+                        "+after" + separator + "continued\n+new\n")
+                self.assertEqual(review.parse_diff(diff), [
+                    {"file": "x", "added_lines": 2, "removed_lines": 2},
+                ])
+
+    def test_embedded_unicode_separator_cannot_create_phantom_header(self):
+        diff = ("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n"
+                "+new\u2028diff --git a/phantom b/phantom\n")
+        self.assertEqual(review.parse_diff(diff), [
+            {"file": "x", "added_lines": 1, "removed_lines": 1},
+        ])
+
+    def test_crlf_diff_still_counts_header_like_content(self):
+        diff = "--- a/x\r\n+++ b/x\r\n@@ -1 +1 @@\r\n--- old\r\n+++ new\r\n"
+        self.assertEqual(review.parse_diff(diff), [
+            {"file": "x", "added_lines": 1, "removed_lines": 1},
+        ])
+
     def test_content_lines_that_look_like_headers_are_counted(self):
         diff = (
             "diff --git a/q.sql b/q.sql\n--- a/q.sql\n+++ b/q.sql\n"

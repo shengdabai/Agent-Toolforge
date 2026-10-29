@@ -78,7 +78,7 @@ Exposes two tools:
 | `type`        | `object array string number integer boolean null` (integer/number reject booleans). A list such as `["string", "null"]` is a union: the value must match at least one member. An unknown type name is not an error (it matches anything) |
 | `required`    | object-level list of required property names |
 | `properties`  | per-key sub-schemas, validated recursively (paths are dotted, e.g. `addr.zip`) |
-| `enum`        | value must be one of the listed literals. JSON-aware: `true` does not match `1` and `false` does not match `0`. A non-list `enum` matches nothing |
+| `enum`        | value must be one of the listed literals. JSON-aware: `true` does not match `1` and `false` does not match `0`, including inside arrays and objects. Numeric `1` and `1.0` still match. A non-list `enum` matches nothing |
 
 Unsupported keywords are ignored, so richer schemas pass through without
 false errors.
@@ -93,6 +93,9 @@ returns `(False, None)` for empty / non-string input, for input it cannot fix,
 and for pathologically deep nesting (e.g. `"[" * 200000`, which used to raise
 `RecursionError` and crash the MCP tool). Note that Python's `json` still
 accepts `NaN` / `Infinity` literals, so a repaired value can contain them.
+Escaped apostrophes inside single-quoted strings are preserved as apostrophes.
+Missing container closers can be appended, but an unterminated string returns
+`(False, None)`; the helper cannot determine the intended missing text.
 
 ## Tests
 

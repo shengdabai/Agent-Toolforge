@@ -133,7 +133,10 @@ def slim(payload: Any, rules: Optional[dict] = None) -> Tuple[Any, dict]:
     fields = rules.get("fields")
     max_items = rules.get("max_items")
     max_chars = rules.get("max_chars")
-    drop_nulls = bool(rules.get("drop_nulls", False))
+    # Like the other optional keys, an explicit null means "not set" (LLM callers often send it).
+    drop_nulls = rules.get("drop_nulls")
+    if drop_nulls is None:
+        drop_nulls = False
 
     # Reject malformed rules instead of silently dropping data: a negative
     # max_items would slice from the end, and a bare string for ``fields``
@@ -142,6 +145,10 @@ def slim(payload: Any, rules: Optional[dict] = None) -> Tuple[Any, dict]:
         isinstance(fields, (str, bytes)) or not isinstance(fields, (list, tuple))
     ):
         raise ValueError("rules['fields'] must be a list of field paths")
+    if fields is not None and any(not isinstance(path, str) or not path for path in fields):
+        raise ValueError("rules['fields'] entries must be non-empty strings")
+    if not isinstance(drop_nulls, bool):
+        raise ValueError("rules['drop_nulls'] must be a boolean")
     for key, limit in (("max_items", max_items), ("max_chars", max_chars)):
         if limit is None:
             continue

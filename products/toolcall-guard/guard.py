@@ -48,16 +48,24 @@ def _matches_type(value: Any, expected: Any) -> bool:
     return True
 
 
+def _json_equal(value: Any, candidate: Any) -> bool:
+    """Compare JSON values without Python's nested True == 1 equivalence."""
+    if isinstance(value, bool) or isinstance(candidate, bool):
+        return isinstance(value, bool) and isinstance(candidate, bool) and value == candidate
+    if isinstance(value, list) or isinstance(candidate, list):
+        return (isinstance(value, list) and isinstance(candidate, list)
+                and len(value) == len(candidate)
+                and all(_json_equal(a, b) for a, b in zip(value, candidate)))
+    if isinstance(value, dict) or isinstance(candidate, dict):
+        return (isinstance(value, dict) and isinstance(candidate, dict)
+                and value.keys() == candidate.keys()
+                and all(_json_equal(value[key], candidate[key]) for key in value))
+    return value == candidate
+
+
 def _in_enum(value: Any, enum: Any) -> bool:
-    """JSON-aware membership: ``True`` must not equal ``1`` (nor False 0)."""
-    if not isinstance(enum, (list, tuple)):
-        return False
-    for candidate in enum:
-        if isinstance(value, bool) != isinstance(candidate, bool):
-            continue
-        if value == candidate:
-            return True
-    return False
+    """JSON-aware membership, including nested arrays and objects."""
+    return isinstance(enum, (list, tuple)) and any(_json_equal(value, item) for item in enum)
 
 
 def _join_path(prefix: str, key: str) -> str:
@@ -232,15 +240,20 @@ def _convert_single_quotes(s: str) -> str:
             # Rewrite a single-quoted string as double-quoted.
             out.append('"')
             i += 1
+            closed = False
             while i < n:
                 c = s[i]
                 if c == "\\" and i + 1 < n:
-                    out.append(c)
-                    out.append(s[i + 1])
+                    if s[i + 1] == "'":
+                        out.append("'")  # JSON needs no escape for an apostrophe.
+                    else:
+                        out.append(c)
+                        out.append(s[i + 1])
                     i += 2
                     continue
                 if c == "'":
                     i += 1
+                    closed = True
                     break
                 if c == '"':
                     out.append('\\"')
@@ -248,6 +261,8 @@ def _convert_single_quotes(s: str) -> str:
                     continue
                 out.append(c)
                 i += 1
+            if not closed:
+                raise ValueError("Unterminated single-quoted string")
             out.append('"')
             continue
         out.append(ch)

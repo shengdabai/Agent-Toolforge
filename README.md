@@ -44,7 +44,9 @@ products/<slug>/
 cd products/<slug> && python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-All ten suites pass on a clean Python 3 (228 tests in total as of 2026-10-01; stdlib only — no install step required for the core or the tests).
+All ten suites pass on Python 3 (257 tests in total as of 2026-10-29;
+256 pass and one optional PDF test skips when `pypdf` is absent). The core
+and tests require no install step; optional PDF extraction uses `pypdf`.
 
 ## Error contract (fail closed)
 

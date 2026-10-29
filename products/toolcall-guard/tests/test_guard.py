@@ -78,6 +78,17 @@ class TestValidateType(unittest.TestCase):
 
 
 class TestValidateEnum(unittest.TestCase):
+    def test_nested_enum_values_distinguish_booleans_from_numbers(self):
+        for value, candidate in (([True], [1]), ([False], [0]),
+                                 ({"x": True}, {"x": 1}),
+                                 ({"x": [False]}, {"x": [0]})):
+            with self.subTest(value=value, candidate=candidate):
+                self.assertEqual(validate(value, {"enum": [candidate]})[0]["kind"], "enum")
+
+    def test_nested_enum_numbers_and_object_key_order_still_match(self):
+        self.assertEqual(validate({"a": [1], "b": True},
+                                  {"enum": [{"b": True, "a": [1.0]}]}), [])
+
     def test_value_not_in_enum_is_flagged(self):
         errors = validate({"name": "Ada", "age": 36, "role": "superuser"}, PERSON_SCHEMA)
         enum_errors = [e for e in errors if e["kind"] == "enum"]
@@ -86,6 +97,18 @@ class TestValidateEnum(unittest.TestCase):
 
 
 class TestRepairJson(unittest.TestCase):
+    def test_single_quote_escape_is_preserved_as_apostrophe(self):
+        self.assertEqual(repair_json(r"{'text': 'don\'t'}"), (True, {"text": "don't"}))
+
+    def test_unterminated_single_quoted_values_are_not_invented(self):
+        for raw in ("'partial", "{'x': 'partial", "{'x': 'partial\\", "{'x': 'partial\\'"):
+            with self.subTest(raw=raw):
+                self.assertEqual(repair_json(raw), (False, None))
+
+    def test_repaired_quotes_preserve_json_escapes_and_double_quotes(self):
+        self.assertEqual(repair_json(r'''{'text': 'a "quote"\nnext\\end'}'''),
+                         (True, {"text": 'a "quote"\nnext\\end'}))
+
     def test_trailing_comma_in_object(self):
         ok, obj = repair_json('{"a": 1, "b": 2,}')
         self.assertTrue(ok)
