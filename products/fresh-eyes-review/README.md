@@ -68,9 +68,13 @@ lines are never counted. If a hunk header is malformed it falls back to
 header-based counting, and a hunk that ends earlier than it declares (truncated
 diff) is closed at the next non-content line such as `diff --git`.
 
+File paths may contain spaces or Git C-style escapes (including UTF-8 octal
+escapes). Plain unified diffs use the `+++` path, or the `---` path for a
+deletion to `/dev/null`; rename-only diffs use the destination path.
+
 Known limitations: in a truncated diff whose next file starts with a plain
 `--- a/x` header (no `diff --git` line) that line may still be counted as one
-removed line; `diff --git` lines whose paths contain spaces are not parsed.
+removed line.
 
 ### Verdict rule
 

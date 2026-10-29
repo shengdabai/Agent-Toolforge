@@ -95,13 +95,15 @@ slim_response(payload, rules) -> {"data": <slimmed>, "meta": <report>}
 | `drop_nulls` | `bool` | Drop dict keys whose value is `null`. |
 
 An empty or omitted `rules` returns a structural copy of the payload unchanged.
+Overlapping fields such as `["user", "user.name"]` keep the entire `user`
+subtree regardless of path order. Other rules still apply within that subtree.
 
 ### Invalid rules raise `ValueError`
 
 Malformed rules are rejected instead of silently dropping data (this replaced
 the earlier lenient behaviour):
 
-- `rules` is not a dict (and not empty/`None`);
+- `rules` is not a dict or `None` (including `False`, `0`, `""`, and `[]`);
 - `fields` is a bare string (e.g. `"user.name"`) or any other non-list/tuple —
   it used to be split into single characters and project the payload away;
 - `max_items` / `max_chars` is not an integer, is a `bool` (`True` used to act
@@ -112,8 +114,6 @@ Through the MCP tool, the `ValueError` surfaces as a tool error.
 
 ## Known limitations
 
-- `fields` that overlap (`["user", "user.name"]` vs `["user.name", "user"]`) can
-  yield different projections depending on order.
 - The truncation marker `…[+N chars]` can make a very short string longer than
   the original.
 - When a list is truncated by `max_items`, `meta` does not report that items

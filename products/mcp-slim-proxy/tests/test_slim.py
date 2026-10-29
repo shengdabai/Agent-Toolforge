@@ -47,6 +47,22 @@ class TestDottedPath(unittest.TestCase):
         out, _ = slim(payload, {"fields": ["user.name", "meta"]})
         self.assertEqual(out, {"user": {"name": "x"}, "meta": {"k": "v"}})
 
+    def test_parent_field_keeps_subtree_regardless_of_path_order(self):
+        payload = {"user": {"name": "x", "id": 7}, "drop": 1}
+        for fields in (["user", "user.name"], ["user.name", "user"]):
+            with self.subTest(fields=fields):
+                out, _ = slim(payload, {"fields": fields})
+                self.assertEqual(out, {"user": payload["user"]})
+                self.assertIsNot(out["user"], payload["user"])
+
+    def test_nested_parent_path_dominates_children_and_still_applies_limits(self):
+        payload = {"user": {"profile": {"name": "long", "ids": [1, 2]}, "drop": 1}}
+        for fields in (["user.profile.name", "user.profile"],
+                       ["user.profile", "user.profile.name"]):
+            with self.subTest(fields=fields):
+                out, _ = slim(payload, {"fields": fields, "max_items": 1})
+                self.assertEqual(out, {"user": {"profile": {"name": "long", "ids": [1]}}})
+
 
 class TestMaxItems(unittest.TestCase):
     def test_truncates_list(self):
@@ -189,6 +205,11 @@ class TestB11RuleValidation(unittest.TestCase):
     def test_rules_must_be_a_dict(self):
         with self.assertRaises(ValueError):
             slim([1], ["max_items"])
+
+    def test_empty_non_dict_rules_are_rejected(self):
+        for rules in (False, 0, "", [], ()):
+            with self.subTest(rules=rules), self.assertRaises(ValueError):
+                slim({"keep": 1}, rules)
 
 
 if __name__ == "__main__":

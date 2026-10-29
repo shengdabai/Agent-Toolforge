@@ -141,15 +141,33 @@ def build_review_prompt(
     return "\n\n".join(sections)
 
 
-def _strip_prefix(raw: str) -> Optional[str]:
-    """Strip a unified-diff path token down to a clean repo-relative path.
+_PATH_ESCAPES = {
+    b"a": b"\a", b"b": b"\b", b"f": b"\f", b"n": b"\n",
+    b"r": b"\r", b"t": b"\t", b"v": b"\v", b'"': b'"', b"\\": b"\\",
+}
 
-    Handles ``a/`` and ``b/`` prefixes and ignores ``/dev/null`` sentinels.
-    Returns None for /dev/null or empty tokens.
-    """
-    token = raw.strip()
+
+def _decode_path(raw: str) -> str:
+    """Decode Git's quoted path format, excluding any tab-separated metadata."""
     # Drop a trailing tab + metadata (e.g. timestamps) if present.
-    token = token.split("\t", 1)[0].strip()
+    token = raw.split("\t", 1)[0]
+    if token.startswith('"') and token.endswith('"'):
+        # Git quotes unusual paths with C escapes. Octal escapes represent
+        # UTF-8 bytes, not individual Unicode characters.
+        encoded = token[1:-1].encode("utf-8", errors="surrogateescape")
+        encoded = re.sub(
+            rb'\\([0-3][0-7]{2}|[abfnrtv"\\])',
+            lambda m: (bytes([int(m[1], 8)]) if m[1][:1].isdigit()
+                       else _PATH_ESCAPES[m[1]]),
+            encoded,
+        )
+        token = encoded.decode("utf-8", errors="surrogateescape")
+    return token
+
+
+def _strip_prefix(raw: str) -> Optional[str]:
+    """Decode a diff path, strip a/ or b/, and ignore /dev/null sentinels."""
+    token = _decode_path(raw)
     if not token or token == "/dev/null":
         return None
     if token.startswith("a/") or token.startswith("b/"):
@@ -159,6 +177,9 @@ def _strip_prefix(raw: str) -> Optional[str]:
 
 # "@@ -old_start[,old_len] +new_start[,new_len] @@" — a missing length means 1.
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+_GIT_HEADER_RE = re.compile(
+    r'^diff --git ("(?:\\.|[^"\\])*"|a/.*?) ("(?:\\.|[^"\\])*"|b/.*)$'
+)
 
 
 def parse_diff(diff_text: Optional[str]) -> List[Dict[str, object]]:
@@ -184,6 +205,7 @@ def parse_diff(diff_text: Optional[str]) -> List[Dict[str, object]]:
     order: List[str] = []
     files: Dict[str, Dict[str, object]] = {}
     current: Optional[str] = None
+    old_path: Optional[str] = None
 
     def ensure(name: str) -> Dict[str, object]:
         if name not in files:
@@ -219,30 +241,48 @@ def parse_diff(diff_text: Optional[str]) -> List[Dict[str, object]]:
             old_left = new_left = 0
         if line.startswith("diff --git "):
             # "diff --git a/x b/x" -> prefer the b/ path (post-image name).
-            parts = line.split()
-            if len(parts) >= 4:
-                name = _strip_prefix(parts[3]) or _strip_prefix(parts[2])
+            if current is not None:
+                ensure(current)
+            current = old_path = None
+            # A new file header closes any hunk, including one opened before
+            # the first file header (e.g. a pasted diff that starts with "@@").
+            old_left = new_left = 0
+            match = _GIT_HEADER_RE.match(line)
+            # Empty/binary files may have no ---/+++ headers. If both paths
+            # are identical, match the whole suffix rather than splitting on
+            # a " b/" that belongs to the filename.
+            same_path = re.fullmatch(r"diff --git a/(.*) b/\1", line)
+            # Preserve support for simple --no-prefix/custom-prefix headers.
+            paths = match.groups() if match else line[11:].split(" ", 1)
+            if same_path:
+                current = same_path[1]
+            elif len(paths) == 2:
+                name = _strip_prefix(paths[1]) or _strip_prefix(paths[0])
                 if name:
                     current = name
-                    ensure(current)
+                    # The later +++ or rename header is authoritative. Delay
+                    # registration so ambiguous paths cannot leave a phantom.
             continue
         if line.startswith("--- "):
-            # Only adopt this as the file name if we don't already have a
-            # better one from a preceding "diff --git" line.
-            name = _strip_prefix(line[4:])
-            if name and current is None:
-                current = name
-                ensure(current)
+            # Wait for +++ before registering a plain unified diff. Its old
+            # and new labels can differ; a deletion uses the old label.
+            old_path = _strip_prefix(line[4:])
             continue
         if line.startswith("+++ "):
-            name = _strip_prefix(line[4:])
+            name = _strip_prefix(line[4:]) or old_path
             if name:
                 # The +++ (post-image) path is authoritative for the file name.
                 current = name
                 ensure(current)
             continue
+        if line.startswith(("rename to ", "copy to ")):
+            if current is not None:
+                current = _decode_path(line.split(" to ", 1)[1])
+            continue
         if line.startswith("@@"):
             # Hunk header: never counted.
+            if current is not None:
+                ensure(current)
             m = _HUNK_RE.match(line)
             if m:
                 old_left = int(m.group(1)) if m.group(1) is not None else 1
@@ -252,8 +292,12 @@ def parse_diff(diff_text: Optional[str]) -> List[Dict[str, object]]:
             # Content before any header => not a real diff line.
             continue
         if line.startswith("+"):
+            ensure(current)
             files[current]["added_lines"] = files[current]["added_lines"] + 1  # type: ignore[operator]
         elif line.startswith("-"):
+            ensure(current)
             files[current]["removed_lines"] = files[current]["removed_lines"] + 1  # type: ignore[operator]
 
+    if current is not None:
+        ensure(current)
     return [files[name] for name in order]

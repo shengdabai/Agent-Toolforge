@@ -60,17 +60,15 @@ def _build_field_tree(fields: List[str]) -> Dict[str, Optional[dict]]:
         for i, part in enumerate(parts):
             is_last = i == len(parts) - 1
             if is_last:
-                # Bare leaf: keep whole subtree unless a deeper path already
-                # established a sub-tree we must preserve.
-                if part not in node:
-                    node[part] = None
-                # If node[part] is already a dict (a deeper path set it), keep it.
+                # Selecting a parent includes all its children, regardless of
+                # whether a narrower path was listed before it.
+                node[part] = None
             else:
-                existing = node.get(part)
-                if not isinstance(existing, dict):
-                    existing = {}
-                    node[part] = existing
-                node = existing
+                if part in node and node[part] is None:
+                    break  # This whole subtree is already selected.
+                if part not in node:
+                    node[part] = {}
+                node = node[part]
     return tree
 
 
@@ -128,7 +126,8 @@ def slim(payload: Any, rules: Optional[dict] = None) -> Tuple[Any, dict]:
     """
     orig_tokens = token_est(payload)
 
-    rules = rules or {}
+    if rules is None:
+        rules = {}
     if not isinstance(rules, dict):
         raise ValueError("rules must be a dict")
     fields = rules.get("fields")
