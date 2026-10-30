@@ -28,3 +28,4 @@ logs/
 *.key
 .omc/state/
 .omc/state.nosync
+.omc/
