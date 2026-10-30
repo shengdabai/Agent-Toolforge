@@ -1,0 +1,44 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unittest:
+    name: ${{ matrix.product }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        product:
+          - agent-memory-core
+          - checkpoint-resume
+          - citation-verifier
+          - cron-guard
+          - fresh-eyes-review
+          - mcp-slim-proxy
+          - multimodal-fs
+          - token-ledger
+          - toolcall-guard
+          - verify-done
+    defaults:
+      run:
+        working-directory: products/${{ matrix.product }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # The test suites use only the standard library; no install step.
+      - name: Run unittest
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
