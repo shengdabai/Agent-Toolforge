@@ -89,31 +89,35 @@ slim_response(payload, rules) -> {"data": <slimmed>, "meta": <report>}
 
 | Key | Type | Effect |
 |-----|------|--------|
-| `fields` | `list[str]` (or tuple) | Whitelist of fields to keep; dotted paths supported. An empty list means no projection. Entries that are not non-empty strings are ignored. |
+| `fields` | `list[str]` (or tuple) | Whitelist of fields to keep; dotted paths supported. An empty list means no projection. Entries must be non-empty strings. |
 | `max_items` | `int >= 0` | Keep only the first N items of every list. `0` empties every list. |
 | `max_chars` | `int >= 0` | Truncate strings longer than N chars. `0` keeps only the marker. |
 | `drop_nulls` | `bool` | Drop dict keys whose value is `null`. |
 
 An empty or omitted `rules` returns a structural copy of the payload unchanged.
+Overlapping fields such as `["user", "user.name"]` keep the entire `user`
+subtree regardless of path order. Other rules still apply within that subtree.
 
 ### Invalid rules raise `ValueError`
 
 Malformed rules are rejected instead of silently dropping data (this replaced
 the earlier lenient behaviour):
 
-- `rules` is not a dict (and not empty/`None`);
+- `rules` is not a dict or `None` (including `False`, `0`, `""`, and `[]`);
 - `fields` is a bare string (e.g. `"user.name"`) or any other non-list/tuple —
   it used to be split into single characters and project the payload away;
 - `max_items` / `max_chars` is not an integer, is a `bool` (`True` used to act
   as `1`), or is negative (`-1` used to slice off the last item).
 
 Callers that relied on the old lenient behaviour must now pass valid rules.
+Every `fields` entry must be a non-empty string; a malformed entry rejects the
+whole rule rather than silently projecting fields away. `None`, `[]`, and `()`
+still disable field projection. `drop_nulls` must be a boolean: values such as
+`"false"`, `0`, and `None` raise `ValueError` rather than being coerced.
 Through the MCP tool, the `ValueError` surfaces as a tool error.
 
 ## Known limitations
 
-- `fields` that overlap (`["user", "user.name"]` vs `["user.name", "user"]`) can
-  yield different projections depending on order.
 - The truncation marker `…[+N chars]` can make a very short string longer than
   the original.
 - When a list is truncated by `max_items`, `meta` does not report that items

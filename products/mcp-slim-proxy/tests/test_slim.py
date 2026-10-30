@@ -20,6 +20,29 @@ class TestTokenEst(unittest.TestCase):
 
 
 class TestWhitelist(unittest.TestCase):
+    def test_malformed_field_entries_raise_instead_of_dropping_data(self):
+        payload = {"name": "visible", "extra": 1}
+        for fields in ([None], [1], [False], [""], ["name", None], ("name", "")):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                slim(payload, {"fields": fields})
+        self.assertEqual(payload, {"name": "visible", "extra": 1})
+
+    def test_drop_nulls_requires_a_boolean(self):
+        for value in ("false", "true", 0, 1, [], {}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                slim({"keep": None}, {"drop_nulls": value})
+
+    def test_drop_nulls_null_means_unset(self):
+        self.assertEqual(slim({"keep": None}, {"drop_nulls": None})[0], {"keep": None})
+
+    def test_valid_boolean_and_empty_field_rules_are_preserved(self):
+        payload = {"keep": None, "other": 1}
+        for fields in (None, [], (), ["keep"], ("keep",)):
+            with self.subTest(fields=fields):
+                expected = {"keep": None} if fields else payload
+                self.assertEqual(slim(payload, {"fields": fields, "drop_nulls": False})[0], expected)
+        self.assertEqual(slim(payload, {"drop_nulls": True})[0], {"other": 1})
+
     def test_keeps_only_whitelisted_fields(self):
         payload = {"a": 1, "b": 2, "c": 3}
         out, _ = slim(payload, {"fields": ["a", "c"]})
@@ -46,6 +69,22 @@ class TestDottedPath(unittest.TestCase):
         payload = {"user": {"name": "x", "id": 7}, "meta": {"k": "v"}}
         out, _ = slim(payload, {"fields": ["user.name", "meta"]})
         self.assertEqual(out, {"user": {"name": "x"}, "meta": {"k": "v"}})
+
+    def test_parent_field_keeps_subtree_regardless_of_path_order(self):
+        payload = {"user": {"name": "x", "id": 7}, "drop": 1}
+        for fields in (["user", "user.name"], ["user.name", "user"]):
+            with self.subTest(fields=fields):
+                out, _ = slim(payload, {"fields": fields})
+                self.assertEqual(out, {"user": payload["user"]})
+                self.assertIsNot(out["user"], payload["user"])
+
+    def test_nested_parent_path_dominates_children_and_still_applies_limits(self):
+        payload = {"user": {"profile": {"name": "long", "ids": [1, 2]}, "drop": 1}}
+        for fields in (["user.profile.name", "user.profile"],
+                       ["user.profile", "user.profile.name"]):
+            with self.subTest(fields=fields):
+                out, _ = slim(payload, {"fields": fields, "max_items": 1})
+                self.assertEqual(out, {"user": {"profile": {"name": "long", "ids": [1]}}})
 
 
 class TestMaxItems(unittest.TestCase):
@@ -189,6 +228,11 @@ class TestB11RuleValidation(unittest.TestCase):
     def test_rules_must_be_a_dict(self):
         with self.assertRaises(ValueError):
             slim([1], ["max_items"])
+
+    def test_empty_non_dict_rules_are_rejected(self):
+        for rules in (False, 0, "", [], ()):
+            with self.subTest(rules=rules), self.assertRaises(ValueError):
+                slim({"keep": 1}, rules)
 
 
 if __name__ == "__main__":

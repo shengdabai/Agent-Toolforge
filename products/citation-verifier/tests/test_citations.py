@@ -47,6 +47,17 @@ class TestExtractCitations(unittest.TestCase):
         result = extract_citations(text)
         self.assertEqual(result["urls"], ["https://a.com/page"])
 
+    def test_preserves_balanced_parentheses_in_urls(self):
+        for url in ("https://a.com/Thing_(concept)",
+                    "https://a.com/Thing_(nested_(concept))"):
+            for text in (url, "Reference (" + url + ").", "[Reference](" + url + ")"):
+                with self.subTest(text=text):
+                    self.assertEqual(extract_citations(text)["urls"], [url])
+
+    def test_parenthesized_url_is_deduplicated_after_prose_trimming(self):
+        url = "https://a.com/Thing_(concept)"
+        self.assertEqual(extract_citations(url + " and (" + url + ").")["urls"], [url])
+
 
 class TestClassify(unittest.TestCase):
     def _fake_fetcher(self, mapping):
@@ -118,6 +129,19 @@ class TestAudit(unittest.TestCase):
         self.assertEqual(result["dead"], 0)
         self.assertEqual(result["unreachable"], 0)
         self.assertEqual(result["suspicious"], [])
+
+    def test_audit_fetches_the_intact_parenthesized_url(self):
+        url = "https://a.com/Thing_(concept)"
+        fetched = []
+
+        def fetcher(actual):
+            fetched.append(actual)
+            return 200 if actual == url else 404
+
+        result = audit("See [reference](" + url + ").", fetcher)
+        self.assertEqual(fetched, [url])
+        self.assertEqual(result["live"], 1)
+        self.assertEqual(result["dead"], 0)
 
     def test_placeholder_url_flagged_suspicious(self):
         text = "Per https://example.com/xxx the result holds."

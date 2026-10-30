@@ -49,8 +49,8 @@ prompt = build_review_prompt(
 
 `parse_diff` counts by hunk length (from the `@@ -a,b +c,d @@` headers), so removed
 lines that look like headers (e.g. `--- old comment`) are counted correctly;
-truncated diffs and `diff --git` paths containing spaces are the known weak
-spots, so check the summary against the diff when it matters.
+truncated diffs (for example a `---` header with no `+++`) are the known weak
+spot, so check the summary against the diff when it matters.
 
 The default checklist covers **correctness, security, edge cases, error
 handling, duplication**. Pass a custom `checklist=[...]` only to add

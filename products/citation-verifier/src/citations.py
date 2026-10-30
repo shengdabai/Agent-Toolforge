@@ -40,7 +40,7 @@ def _trim_url(url: str) -> str:
     """Strip trailing prose punctuation while keeping balanced parens."""
     while url and url[-1] in _TRAILING_PUNCT:
         # Keep a closing paren only if the URL itself opened one.
-        if url[-1] == ")" and url.count("(") > url.count(")"):
+        if url[-1] == ")" and url.count("(") >= url.count(")"):
             break
         url = url[:-1]
     return url
