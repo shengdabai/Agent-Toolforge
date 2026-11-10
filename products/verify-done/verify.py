@@ -86,7 +86,10 @@ def _run_one(check, runner):
     passed = True
     reasons = []
 
-    if isinstance(actual_exit, bool) or actual_exit != expect_exit:
+    if not isinstance(actual_exit, int) or isinstance(actual_exit, bool):
+        passed = False
+        reasons.append("runner exit code must be an int (excluding bool)")
+    elif actual_exit != expect_exit:
         passed = False
         reasons.append("exit %r != expected %r" % (actual_exit, expect_exit))
 

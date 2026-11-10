@@ -126,6 +126,23 @@ class RunChecksSubstr(unittest.TestCase):
 
 
 class RunChecksEdge(unittest.TestCase):
+    def test_actual_exit_requires_integer_excluding_bool(self):
+        for value in (0.0, 1.0, 0j, 1+0j, True, False, None, '0', '1'):
+            for expected in (0, 1):
+                with self.subTest(value=value, expected=expected):
+                    report = run_checks(
+                        [{'name': 'x', 'cmd': 'c', 'expect_exit': expected}],
+                        runner=lambda c: (value, 'ok'))
+                    self.assertFalse(report['all_passed'])
+                    self.assertIn('exit', report['results'][0]['reason'])
+
+    def test_integer_exit_codes_still_match(self):
+        for value in (-15, 0, 1, 255):
+            with self.subTest(value=value):
+                self.assertTrue(run_checks(
+                    [{'name': 'x', 'cmd': 'c', 'expect_exit': value}],
+                    runner=lambda c: (value, ''))['all_passed'])
+
     def test_empty_checks_is_vacuously_passed(self):
         report = run_checks([], runner=make_runner({}))
         self.assertTrue(report["all_passed"])
