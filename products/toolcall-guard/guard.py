@@ -11,6 +11,7 @@ Public API:
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 __all__ = ["validate", "correction_hint", "repair_json"]
@@ -43,7 +44,8 @@ def _matches_type(value: Any, expected: Any) -> bool:
     if expected == "integer":
         return isinstance(value, int) and not isinstance(value, bool)
     if expected == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
+        return ((isinstance(value, int) and not isinstance(value, bool))
+                or (isinstance(value, float) and math.isfinite(value)))
     # Unknown type keyword: do not fabricate an error (forward-compatible).
     return True
 
@@ -301,6 +303,21 @@ def _balance_brackets(s: str) -> str:
     return s + suffix
 
 
+def _reject_constant(value):
+    raise ValueError("Non-finite JSON number: " + value)
+
+
+def _finite_float(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("JSON number overflow")
+    return number
+
+
+def _strict_loads(source):
+    return json.loads(source, parse_constant=_reject_constant, parse_float=_finite_float)
+
+
 def repair_json(s: str):
     """Best-effort repair of common broken JSON.
 
@@ -314,7 +331,7 @@ def repair_json(s: str):
 
     # Fast path: already valid.
     try:
-        return (True, json.loads(s))
+        return (True, _strict_loads(s))
     except RecursionError:
         # Pathologically deep nesting: refuse instead of crashing the caller.
         return (False, None)
@@ -328,6 +345,6 @@ def repair_json(s: str):
         candidate = _balance_brackets(candidate)
         # Balancing may have exposed a fresh trailing comma; strip once more.
         candidate = _strip_trailing_commas(candidate)
-        return (True, json.loads(candidate))
+        return (True, _strict_loads(candidate))
     except (ValueError, TypeError, RecursionError):
         return (False, None)
