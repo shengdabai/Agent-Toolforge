@@ -19,6 +19,29 @@ PERSON_SCHEMA = {
 }
 
 
+class TestFiniteNumbers(unittest.TestCase):
+    def test_repair_rejects_non_finite_numbers_on_both_paths(self):
+        for number in ('NaN', 'Infinity', '-Infinity', '1e999', '-1e999'):
+            for source in (number, '{"x": [' + number + ']}',
+                           "{'x': [" + number + ',],}'):
+                with self.subTest(source=source):
+                    self.assertEqual(repair_json(source), (False, None))
+
+    def test_number_schema_rejects_non_finite_floats(self):
+        for value in (float('nan'), float('inf'), float('-inf')):
+            for schema_type in ('number', ['number', 'null']):
+                with self.subTest(value=value, schema_type=schema_type):
+                    self.assertTrue(validate(value, {'type': schema_type}))
+
+    def test_finite_numbers_large_integers_and_strings_still_work(self):
+        for value in (0, -2, 1.5, 1e308, 10**400):
+            with self.subTest(value=value):
+                self.assertEqual(validate(value, {'type': 'number'}), [])
+                self.assertEqual(repair_json(str(value)), (True, value))
+        self.assertEqual(repair_json("{'x': 'Infinity',}"),
+                         (True, {'x': 'Infinity'}))
+
+
 class TestValidateCompliant(unittest.TestCase):
     def test_fully_compliant_args_yield_no_errors(self):
         errors = validate({"name": "Ada", "age": 36, "role": "admin"}, PERSON_SCHEMA)
