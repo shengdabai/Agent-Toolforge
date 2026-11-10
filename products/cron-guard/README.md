@@ -34,7 +34,11 @@ intents.
 ## Usage
 
 ```python
+from pathlib import Path
 from cronguard import guard_run, GuardAborted
+
+state = Path.home() / ".local/state/cron-guard"
+state.mkdir(mode=0o700, parents=True, exist_ok=True)
 
 def work():
     # the actual job
@@ -43,11 +47,11 @@ def work():
 result = guard_run(
     name="daily-digest",
     work_fn=work,
-    lock_path="/tmp/daily-digest.lock",
-    budget_state="/tmp/daily-digest.budget.json",
+    lock_path=str(state / "daily-digest.lock"),
+    budget_state=str(state / "daily-digest.budget.json"),
     cap=100,            # at most 100 cost-units total
     cost=1,             # this run costs 1 unit
-    audit_path="/tmp/daily-digest.audit.jsonl",
+    audit_path=str(state / "daily-digest.audit.jsonl"),
 )
 
 if result is GuardAborted.LOCK_HELD:
@@ -67,6 +71,19 @@ Use `wrapper.sh` as the program the scheduler invokes. It calls a
 `guard_run`-protected Python entry point, so overlap/budget/audit are enforced
 regardless of how the scheduler behaves. See `SKILL.md` for the `.plist` and
 crontab templates.
+
+The wrapper now defaults to `$HOME/.local/state/cron-guard`, which persists
+across temporary-directory cleanup. `CRONGUARD_STATE_DIR` overrides this path.
+It creates the state directory with mode `0700` and refuses existing symlinks,
+directories owned by another user, or group/other-accessible directories.
+Keep the directory and its parents under trusted control; direct Python callers
+must enforce the same directory requirements themselves. New state files use
+mode `0600`; audit and mutex append targets reject symlinks and non-regular files.
+
+When upgrading from the old temporary-directory default, stop scheduled jobs
+and copy the existing budget into the private directory before restarting.
+Preserve the previous total: a missing budget starts at zero. Keep a backup
+of the old state until the new path and total have been verified.
 
 ## Test
 

@@ -13,13 +13,14 @@
 # cron:    0 * * * * /path/to/wrapper.sh >> /tmp/job.cron.log 2>&1
 
 set -euo pipefail
+umask 077
 
 # --- configuration ---------------------------------------------------------
 JOB_NAME="example-job"
 # Directory containing cronguard.py (defaults to this script's own directory).
 GUARD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-STATE_DIR="${CRONGUARD_STATE_DIR:-${TMPDIR:-/tmp}}"
+STATE_DIR="${CRONGUARD_STATE_DIR:-${HOME}/.local/state/cron-guard}"
 LOCK_PATH="${STATE_DIR%/}/${JOB_NAME}.lock"
 BUDGET_STATE="${STATE_DIR%/}/${JOB_NAME}.budget.json"
 AUDIT_PATH="${STATE_DIR%/}/${JOB_NAME}.audit.jsonl"
@@ -31,10 +32,18 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 # --- run -------------------------------------------------------------------
 PYTHONPATH="${GUARD_DIR}:${PYTHONPATH:-}" "${PYTHON_BIN}" - "$JOB_NAME" \
   "$LOCK_PATH" "$BUDGET_STATE" "$AUDIT_PATH" "$BUDGET_CAP" "$RUN_COST" <<'PYEOF'
+import os
+import stat
 import sys
 from cronguard import guard_run, GuardAborted
 
 name, lock_path, budget_state, audit_path, cap, cost = sys.argv[1:7]
+state_dir = os.path.dirname(lock_path)
+os.makedirs(state_dir, mode=0o700, exist_ok=True)
+info = os.lstat(state_dir)
+if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) & 0o077):
+    raise ValueError("State directory must be owned by the current user, private (0700), and not a symlink")
 cap = float(cap)
 cost = float(cost)
 

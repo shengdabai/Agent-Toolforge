@@ -1,9 +1,13 @@
 """Test suite for cronguard (stdlib unittest only)."""
 import json
 import os
+from pathlib import Path
+import stat
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 # Make the package root importable when run via `python3 -m unittest discover -s tests`.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -19,6 +23,124 @@ from cronguard import (  # noqa: E402
     read_audit_log,
     release_lock,
 )
+
+
+class SecureStateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.state = self.root / 'budget.json'
+        self.budget = BudgetGuard(str(self.state), cap=10)
+
+    def test_predictable_temp_symlink_cannot_overwrite_target(self):
+        target = self.root / 'other.txt'
+        target.write_text('keep')
+        trap = Path('{}.{}.tmp'.format(self.state, os.getpid()))
+        trap.symlink_to(target)
+        self.assertTrue(self.budget.spend(1))
+        self.assertEqual(target.read_text(), 'keep')
+        self.assertTrue(trap.is_symlink())
+
+    def test_budget_is_private_even_with_permissive_umask(self):
+        old = os.umask(0)
+        try:
+            self.budget.spend(1)
+        finally:
+            os.umask(old)
+        self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), 0o600)
+
+    def test_failed_store_preserves_budget_and_removes_temp(self):
+        self.budget.spend(2)
+        for operation in ('json.dump', 'os.fsync', 'os.replace'):
+            before = set(self.root.iterdir())
+            with self.subTest(operation=operation):
+                with mock.patch('cronguard.' + operation, side_effect=OSError('failed')):
+                    with self.assertRaises(OSError):
+                        self.budget.spend(1)
+                self.assertEqual(self.budget.total(), 2)
+                self.assertEqual(set(self.root.iterdir()), before)
+
+    def test_fsync_happens_before_replace(self):
+        with mock.patch('cronguard.os.fsync', wraps=os.fsync) as sync:
+            replace = os.replace
+            def checked_replace(src, dst):
+                sync.assert_called_once()
+                self.assertEqual(json.loads(Path(src).read_text()), {'total': 1})
+                replace(src, dst)
+            with mock.patch('cronguard.os.replace', side_effect=checked_replace):
+                self.budget.spend(1)
+
+    def test_append_targets_reject_symlinks_and_fifos(self):
+        target = self.root / 'other.txt'
+        target.write_text('keep')
+        for name in ('audit.jsonl', 'job.lock.mutex', 'budget.json.mutex'):
+            path = self.root / name
+            for kind in ('symlink', 'fifo'):
+                with self.subTest(name=name, kind=kind):
+                    if kind == 'symlink':
+                        path.symlink_to(target)
+                    else:
+                        os.mkfifo(path)
+                    try:
+                        # A subprocess bounds the test if opening a FIFO blocks.
+                        code = ("from cronguard import *; " +
+                                ("audit_log(%r, {})" % str(path) if name == 'audit.jsonl'
+                                 else "acquire_lock(%r)" % str(self.root / 'job.lock')
+                                 if name == 'job.lock.mutex'
+                                 else "BudgetGuard(%r, 10).spend(1)" % str(self.state)))
+                        proc = subprocess.run([sys.executable, '-B', '-c', code],
+                                              cwd=Path(__file__).resolve().parents[1],
+                                              capture_output=True, text=True, timeout=3)
+                        self.assertNotEqual(proc.returncode, 0)
+                        self.assertIn('OSError', proc.stderr)
+                        self.assertEqual(target.read_text(), 'keep')
+                    finally:
+                        path.unlink()
+
+    def test_new_lock_mutex_and_audit_are_private(self):
+        lock = str(self.root / 'job.lock')
+        log = str(self.root / 'audit.jsonl')
+        old = os.umask(0)
+        try:
+            token = acquire_lock(lock)
+            audit_log(log, {})
+        finally:
+            os.umask(old)
+        for path in (lock, lock + '.mutex', log):
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertTrue(release_lock(lock, token))
+
+    def _wrapper(self, state_dir=None):
+        env = dict(os.environ, HOME=str(self.root), TMPDIR=str(self.root) + '/',
+                   PYTHON_BIN=sys.executable, PYTHONDONTWRITEBYTECODE='1',
+                   CRONGUARD_CAP='2', CRONGUARD_COST='1')
+        env.pop('CRONGUARD_STATE_DIR', None)
+        if state_dir is not None:
+            env['CRONGUARD_STATE_DIR'] = str(state_dir)
+        return subprocess.run(['bash', str(Path(__file__).resolve().parents[1] / 'wrapper.sh')],
+                              env=env, capture_output=True, text=True, timeout=5)
+
+    def test_wrapper_default_is_private_persistent_and_enforces_budget(self):
+        for _ in range(3):
+            proc = self._wrapper()
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        state = self.root / '.local/state/cron-guard'
+        self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o700)
+        self.assertEqual(json.loads((state / 'example-job.budget.json').read_text()),
+                         {'total': 2})
+        self.assertIn('budget cap', proc.stdout)
+
+    def test_wrapper_honors_override_and_rejects_unsafe_directory(self):
+        custom = self.root / 'custom'
+        self.assertEqual(self._wrapper(custom).returncode, 0)
+        self.assertTrue((custom / 'example-job.budget.json').exists())
+        custom.chmod(0o777)
+        self.assertNotEqual(self._wrapper(custom).returncode, 0)
+        custom.chmod(0o700)
+        link = self.root / 'linked'
+        link.symlink_to(custom, target_is_directory=True)
+        self.assertNotEqual(self._wrapper(link).returncode, 0)
 
 
 class AcquireLockTests(unittest.TestCase):

@@ -26,6 +26,8 @@ import errno
 import json
 import os
 import socket
+import stat
+import tempfile
 import time
 import uuid
 
@@ -100,12 +102,29 @@ def _read_lock_payload(lock_path: str):
 
 
 @contextmanager
+def _private_append(path):
+    """Open regular state files without following symlinks or blocking on FIFOs.
+
+    Callers must keep parent directories private and trusted.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND |
+                 os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("State append target must be a regular file")
+        with os.fdopen(fd, "a", encoding="utf-8", closefd=False) as handle:
+            yield handle
+    finally:
+        os.close(fd)
+
+
+@contextmanager
 def _state_mutex(path):
     """POSIX advisory mutex. Keep this inode; unlinking it breaks coordination."""
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(path, "a+") as handle:
+    with _private_append(path) as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield
@@ -135,7 +154,7 @@ def _acquire_lock_unlocked(lock_path: str):
 
     for _attempt in range(2):
         try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
             payload = _read_lock_payload(lock_path)
             holder_pid = payload.get("pid") if isinstance(payload, dict) else None
@@ -216,10 +235,20 @@ class BudgetGuard:
             raise ValueError("Budget state unreadable or corrupt; refusing to reset spending") from error
 
     def _store(self, total: float) -> None:
-        tmp = "{}.{}.tmp".format(self.state_path, os.getpid())
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"total": total}, f)
-        os.replace(tmp, self.state_path)
+        parent = os.path.dirname(self.state_path) or "."
+        fd, tmp = tempfile.mkstemp(prefix=".cronguard-", suffix=".tmp", dir=parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as f:
+                json.dump({"total": total}, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.state_path)
+        finally:
+            os.close(fd)
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
 
     def total(self) -> float:
         return self._load()
@@ -273,7 +302,7 @@ def audit_log(log_path: str, record: dict) -> dict:
     entry = dict(record)
     entry.setdefault("ts", time.time())
     line = json.dumps(entry, ensure_ascii=False)
-    with open(log_path, "a", encoding="utf-8") as f:
+    with _private_append(log_path) as f:
         f.write(line + "\n")
     return entry
 
